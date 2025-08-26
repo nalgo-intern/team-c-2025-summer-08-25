@@ -52,4 +52,3 @@ if __name__ == "__main__":
         action = env.action_space.sample()  # ランダム行動
         obs, reward, terminated, truncated, info = env.step(action)
         print(f"行動:{action}, 観測:{obs}, 報酬:{reward}, 終了:{terminated}")
-
