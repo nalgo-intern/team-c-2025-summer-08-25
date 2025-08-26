@@ -14,3 +14,5 @@ model.learn(total_timesteps=10000)
 
 # 学習済みモデルを保存
 model.save("model/enemy_model")
+
+# test
