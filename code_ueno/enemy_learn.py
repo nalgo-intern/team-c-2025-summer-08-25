@@ -1,3 +1,4 @@
+#branch_test
 import gymnasium as gym
 from stable_baselines3 import PPO
 from enemy_env import ChaseEnv  # 自作環境をインポート
@@ -14,5 +15,3 @@ model.learn(total_timesteps=10000)
 
 # 学習済みモデルを保存
 model.save("model/enemy_model")
-
-# test
