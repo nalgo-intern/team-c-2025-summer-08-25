@@ -25,7 +25,7 @@ clock = pygame.time.Clock()
 # 環境とモデルの読み込み
 # -----------------------------
 env = ChaseEnv(player_controlled_by_human=True)
-model = PPO.load("model\enemy_model", env=env)
+model = PPO.load("model/enemy_model3", env=env)
 
 obs, _ = env.reset()
 

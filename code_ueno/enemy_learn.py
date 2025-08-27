@@ -25,7 +25,7 @@ def main():
     model.learn(total_timesteps=50000)
 
     # 学習済みモデルを保存
-    model.save("model/enemy_model2")
+    model.save("model/enemy_model3")
 
 if __name__ == "__main__":
     main()
