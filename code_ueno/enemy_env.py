@@ -67,9 +67,7 @@ class ChaseEnv(gym.Env):
         info = {}
         return obs, reward, terminated, truncated, info
 
-
-# 環境テスト
-if __name__ == "__main__":
+def main():
     print("--- 簡易AIで動くプレイヤーのテスト ---")
     env_ai_player = ChaseEnv()
     obs_ai, _ = env_ai_player.reset()
@@ -93,3 +91,7 @@ if __name__ == "__main__":
         if terminated_human or truncated_human:
             print("人間プレイヤーエピソード終了")
             break
+
+# 環境テスト
+if __name__ == "__main__":
+    main()
