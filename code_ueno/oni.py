@@ -7,10 +7,21 @@ import sys
 
 # --- ダミー環境の定義 ---
 # AIモデルをロードするために、モデルが学習した環境の形式を再現するためのダミークラス
-class DummyEnv:
+# gymnasium.Envを継承することで、Stable Baselines3の環境チェックを通過できます
+class DummyEnv(gym.Env):
     def __init__(self):
+        # 親クラスのコンストラクタを呼び出す
+        super().__init__()
         self.observation_space = gym.spaces.Box(low=0, high=9, shape=(4,), dtype=np.int32)
         self.action_space = gym.spaces.Discrete(4)
+    
+    # AIモデルのロードに必要となる、必須メソッドのスタブを定義
+    # このメソッドは実際にゲーム内で使われるわけではありません
+    def reset(self, seed=None, options=None):
+        return self.observation_space.sample(), {}
+
+    def step(self, action):
+        return self.observation_space.sample(), 0, False, False, {}
 
 # 学習済みモデルをロード
 # グローバルスコープで一度だけロード
@@ -46,7 +57,6 @@ def get_oni_next_move(grid, oni_pos, player_pos):
     obs = np.array([oni_pos[0], oni_pos[1], player_pos[0], player_pos[1]])
     
     # AIモデルに行動を予測させる
-    # `predict`は観測値の配列を期待するため、obsを`[obs]`のように変更
     action, _states = model.predict(obs)
     
     # 行動から座標の変更量を決定
