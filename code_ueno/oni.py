@@ -10,7 +10,7 @@ import sys
 # gymnasium.Envを継承することで、Stable Baselines3の環境チェックを通過できます
 class DummyEnv(gym.Env):
     def __init__(self):
-        # 親クラスのコンストラクタを呼び出す
+        # 親クラスのコンストラクタの呼び出し
         super().__init__()
         self.observation_space = gym.spaces.Box(low=0, high=9, shape=(4,), dtype=np.int32)
         self.action_space = gym.spaces.Discrete(4)
