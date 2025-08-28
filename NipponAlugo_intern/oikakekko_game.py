@@ -21,10 +21,9 @@ pygame.display.set_caption("Grid Greed")
 # 色
 BLACK, WHITE, BG_GREEN, RED, YELLOW = (0,0,0), (255,255,255), (85,107,47), (255,0,0), (255,255,0)
 
-# ▼▼▼【変更】UI画像のスケールファクターを定義 ▼▼▼
-UI_SCALE_FACTOR_DISPLAY = 0.15 # coin:の文字
-UI_SCALE_FACTOR = 0.07 # coin:以外の文字
-# ▲▲▲【変更】ここまで ▲▲▲
+# UI画像のスケールファクターを定義
+UI_SCALE_FACTOR_DISPLAY = 0.15
+UI_SCALE_FACTOR = 0.07
 
 # --- 画像読み込み ---
 try:
@@ -58,20 +57,15 @@ try:
     coin_img = pygame.image.load(os.path.join(BASE_DIR, "coin.png")).convert_alpha()
     coin_img = pygame.transform.scale(coin_img, (GRID_SIZE * 0.9, GRID_SIZE * 0.9))
     rope_img = pygame.image.load(os.path.join(BASE_DIR, "rope.png")).convert_alpha()
-
-    # ▼▼▼【変更】コインカウンター用の画像を読み込み、リサイズする ▼▼▼
     coin_display_img = pygame.image.load(os.path.join(BASE_DIR, "coin_display.png")).convert_alpha()
     coin_display_img = pygame.transform.scale_by(coin_display_img, UI_SCALE_FACTOR_DISPLAY)
-
     number_images = []
-    for i in range(21): # 0から20までの画像を読み込む
+    for i in range(21):
         img = pygame.image.load(os.path.join(BASE_DIR, f"number_{i}.png")).convert_alpha()
-        img = pygame.transform.scale_by(img, UI_SCALE_FACTOR) # リサイズ
+        img = pygame.transform.scale_by(img, UI_SCALE_FACTOR)
         number_images.append(img)
-    
     slash_img = pygame.image.load(os.path.join(BASE_DIR, "slash.png")).convert_alpha()
-    slash_img = pygame.transform.scale_by(slash_img, UI_SCALE_FACTOR) # リサイズ
-    # ▲▲▲【変更】ここまで ▲▲▲
+    slash_img = pygame.transform.scale_by(slash_img, UI_SCALE_FACTOR)
 
 except pygame.error as e:
     print(f"画像の読み込みに失敗しました: {e}")
@@ -87,23 +81,38 @@ stage_clear_text = game_over_font.render("STAGE CLEAR!", True, YELLOW)
 stage_clear_rect = stage_clear_text.get_rect(center=(WIDTH // 2, HEIGHT // 2))
 
 # --- グローバル変数 ---
-player_x, player_y, oni_x, oni_y = 0, 0, 0, 0
-field, last_move_time, oni_last_move_time, coin_count = [], 0, 0, 0
+player_x, player_y = 0, 0
+field, last_move_time, coin_count = [], 0, 0
 rope_pos = (GRID_WIDTH // 2, GRID_HEIGHT // 2)
 rope = None
+oni_list = [] # ▼▼▼【変更】鬼のリストを追加 ▼▼▼
 MODE = "START_SCREEN"
 
-# --- Ropeクラスの定義 ---
+# ▼▼▼【変更】鬼をクラスで管理する ▼▼▼
+class Oni:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.move_interval = random.randint(450, 650) # 鬼ごとに少し速度を変える
+        self.last_move_time = 0
+        self.image = oni_img
+
+    def update_position(self, bfs_map, player_pos):
+        next_pos = get_oni_next_move(bfs_map, (self.x, self.y), player_pos)
+        self.x, self.y = next_pos
+
+    def draw(self, surface):
+        surface.blit(self.image, (self.x * GRID_SIZE, self.y * GRID_SIZE))
+# ▲▲▲【変更】ここまで ▲▲▲
+
 class Rope:
     def __init__(self, x_pixel, target_y_pixel):
         self.x, self.target_y, self.end_y = x_pixel, target_y_pixel, 0
         self.speed, self.finished = 8, False
         self.image = rope_img
     def update(self):
-        if not self.finished:
-            self.end_y += self.speed
-            if self.end_y >= self.target_y:
-                self.end_y, self.finished = self.target_y, True
+        if not self.finished: self.end_y = min(self.target_y, self.end_y + self.speed)
+        if self.end_y == self.target_y: self.finished = True
     def draw(self, surface):
         if self.end_y > 0:
             scaled_rope = pygame.transform.scale(self.image, (self.image.get_width(), self.end_y))
@@ -111,30 +120,44 @@ class Rope:
             surface.blit(scaled_rope, (draw_x, 0))
 
 def reset_game():
-    global player_x, player_y, oni_x, oni_y, field, last_move_time, oni_last_move_time, coin_count, rope
+    global player_x, player_y, field, last_move_time, coin_count, rope, oni_list
     player_x, player_y = rope_pos; coin_count = 0; rope = None
+    oni_list = [] # 鬼のリストをリセット
+
     field = [[{"type": "grass", "bush": False, "coin": False} for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
+    
+    occupied_positions = {(player_x, player_y)} # プレイヤーの位置を占有済みとする
+
     rocks_set = set()
     while len(rocks_set) < random.randint(5, 10):
         rx, ry = random.randint(0, GRID_WIDTH - 1), random.randint(0, GRID_HEIGHT - 1)
-        if (rx, ry) != (player_x, player_y):
-            field[ry][rx]["type"] = "rock"; rocks_set.add((rx, ry))
+        if (rx, ry) not in occupied_positions:
+            field[ry][rx]["type"] = "rock"; rocks_set.add((rx, ry)); occupied_positions.add((rx, ry))
+    
     coins_placed = 0
     while coins_placed < 20:
         cx, cy = random.randint(0, GRID_WIDTH - 1), random.randint(0, GRID_HEIGHT - 1)
-        if (cx, cy) != (player_x, player_y) and field[cy][cx]["type"] != "rock" and not field[cy][cx]["coin"]:
+        if (cx, cy) not in occupied_positions and not field[cy][cx]["coin"]:
             field[cy][cx]["coin"] = True; coins_placed += 1
+    
+    # ▼▼▼【変更】鬼を2体生成する ▼▼▼
+    for _ in range(2):
+        while True:
+            ox, oy = random.randint(0, GRID_WIDTH - 1), random.randint(0, GRID_HEIGHT - 1)
+            distance = abs(ox - player_x) + abs(oy - player_y)
+            if (ox, oy) not in occupied_positions and distance >= 3:
+                oni_list.append(Oni(ox, oy))
+                occupied_positions.add((ox, oy))
+                break
+    # ▲▲▲【変更】ここまで ▲▲▲
+
     for y in range(GRID_HEIGHT):
         for x in range(GRID_WIDTH):
             if field[y][x]["type"] == "grass" and random.random() < 0.1: field[y][x]["bush"] = True
             if 0 <= y - 1 and field[y - 1][x]["bush"] and random.random() < 0.4: field[y][x]["bush"] = True
             if 0 <= x - 1 and field[y][x - 1]["bush"] and random.random() < 0.4: field[y][x]["bush"] = True
-    while True:
-        oni_x, oni_y = random.randint(0, GRID_WIDTH - 1), random.randint(0, GRID_HEIGHT - 1)
-        distance = abs(oni_x - player_x) + abs(oni_y - player_y)
-        if (oni_x, oni_y) != (player_x, player_y) and field[oni_y][oni_x]["type"] != "rock" and distance >= 3:
-            break
-    last_move_time, oni_last_move_time = 0, 0
+    
+    last_move_time = 0
 
 class Leaf:
     def __init__(self):
@@ -151,23 +174,17 @@ class Leaf:
         surface.blit(rotated_leaf, leaf_rect)
 
 def draw_coin_counter(surface, count):
-    # COIN: 画像を描画
     start_x = 10
     surface.blit(coin_display_img, (start_x, 10))
-    current_x = start_x + coin_display_img.get_width() + 5 # 5pxの間隔
-
-    # 現在のコイン枚数を描画
+    current_x = start_x + coin_display_img.get_width() + 5
     count_str = str(count)
+    if not count_str: count_str = "0"
     for digit in count_str:
         num_img = number_images[int(digit)]
         surface.blit(num_img, (current_x, 23))
         current_x += num_img.get_width() + 2
-
-    # / を描画
     surface.blit(slash_img, (current_x, 23))
     current_x += slash_img.get_width() + 2
-
-    # 合計枚数(20)を描画
     total_str = "20"
     for digit in total_str:
         num_img = number_images[int(digit)]
@@ -176,7 +193,8 @@ def draw_coin_counter(surface, count):
 
 # メインループ
 clock = pygame.time.Clock()
-move_interval, oni_move_interval, blink_interval, leaf_spawn_interval = 150, 500, 500, 600
+MOVE_INTERVAL_NORMAL, MOVE_INTERVAL_SLOW = 150, 600
+blink_interval, leaf_spawn_interval = 500, 600
 last_blink_time, last_leaf_spawn_time = 0, 0
 show_press_enter, leaves = True, []
 
@@ -209,7 +227,8 @@ while True:
     elif MODE == "PLAYING":
         current_time = pygame.time.get_ticks()
         keys = pygame.key.get_pressed()
-        if current_time - last_move_time > move_interval:
+        current_move_interval = MOVE_INTERVAL_SLOW if field[player_y][player_x]["bush"] else MOVE_INTERVAL_NORMAL
+        if current_time - last_move_time > current_move_interval:
             new_x, new_y = player_x, player_y
             if keys[pygame.K_w] and player_y > 0: new_y -= 1
             elif keys[pygame.K_s] and player_y < GRID_HEIGHT - 1: new_y += 1
@@ -220,17 +239,21 @@ while True:
         if field[player_y][player_x]["coin"]:
             field[player_y][player_x]["coin"] = False; coin_count += 1
             if coin_count >= 15 and rope is None:
-                rope_pixel_x = rope_pos[0] * GRID_SIZE + GRID_SIZE // 2
-                rope_pixel_y_target = rope_pos[1] * GRID_SIZE + GRID_SIZE // 2
-                rope = Rope(rope_pixel_x, rope_pixel_y_target)
+                rope = Rope(rope_pos[0] * GRID_SIZE + GRID_SIZE // 2, rope_pos[1] * GRID_SIZE + GRID_SIZE // 2)
         if rope and rope.finished and (player_x, player_y) == rope_pos:
             MODE = "STAGE_CLEAR"
         if rope: rope.update()
-        if current_time - oni_last_move_time > oni_move_interval:
-            bfs_map = ["".join(["#" if cell["type"] == "rock" else "." for cell in row]) for row in field]
-            oni_x, oni_y = get_oni_next_move(bfs_map, (oni_x, oni_y), (player_x, player_y))
-            oni_last_move_time = current_time
-        if (oni_x, oni_y) == (player_x, player_y): MODE = "GAME_OVER"
+        
+        # ▼▼▼【変更】すべての鬼をループで処理 ▼▼▼
+        bfs_map = ["".join(["#" if cell["type"] == "rock" else "." for cell in row]) for row in field]
+        for oni in oni_list:
+            if current_time - oni.last_move_time > oni.move_interval:
+                oni.update_position(bfs_map, (player_x, player_y))
+                oni.last_move_time = current_time
+            if (oni.x, oni.y) == (player_x, player_y):
+                MODE = "GAME_OVER"
+                break # 一体でも捕まったらループを抜ける
+        # ▲▲▲【変更】ここまで ▲▲▲
 
         # 描画 (プレイ中)
         screen.fill(BG_GREEN) 
@@ -248,8 +271,10 @@ while True:
         for x in range(0, WIDTH, GRID_SIZE): pygame.draw.line(screen, BLACK, (x, 0), (x, HEIGHT))
         for y in range(0, HEIGHT, GRID_SIZE): pygame.draw.line(screen, BLACK, (0, y), (WIDTH, y))
         screen.blit(hero_img, (player_x * GRID_SIZE, player_y * GRID_SIZE))
-        screen.blit(oni_img, (oni_x * GRID_SIZE, oni_y * GRID_SIZE))
-        
+        # ▼▼▼【変更】すべての鬼を描画 ▼▼▼
+        for oni in oni_list:
+            oni.draw(screen)
+        # ▲▲▲【変更】ここまで ▲▲▲
         draw_coin_counter(screen, coin_count)
 
     elif MODE == "GAME_OVER":
