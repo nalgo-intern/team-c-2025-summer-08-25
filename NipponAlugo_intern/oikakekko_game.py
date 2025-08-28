@@ -20,10 +20,13 @@ pygame.display.set_caption("Grid Greed")
 
 # 色
 BLACK, WHITE, BG_GREEN, RED, YELLOW = (0,0,0), (255,255,255), (85,107,47), (255,0,0), (255,255,0)
+BUTTON_COLOR = (100, 100, 100)
+LOCKED_COLOR = (50, 50, 50)
 
 # UI画像のスケールファクターを定義
 UI_SCALE_FACTOR_DISPLAY = 0.15
 UI_SCALE_FACTOR = 0.07
+UI_PANEL_SCALE = 0.8
 
 # --- 画像読み込み ---
 try:
@@ -66,13 +69,26 @@ try:
         number_images.append(img)
     slash_img = pygame.image.load(os.path.join(BASE_DIR, "slash.png")).convert_alpha()
     slash_img = pygame.transform.scale_by(slash_img, UI_SCALE_FACTOR)
+    
+    stage_panel_img = pygame.image.load(os.path.join(BASE_DIR, "stage_panel.png")).convert_alpha()
+    stage_panel_img = pygame.transform.scale_by(stage_panel_img, UI_PANEL_SCALE)
+    lock_icon_img = pygame.image.load(os.path.join(BASE_DIR, "lock_icon.png")).convert_alpha()
+    lock_icon_img = pygame.transform.scale_by(lock_icon_img, UI_PANEL_SCALE)
 
 except pygame.error as e:
     print(f"画像の読み込みに失敗しました: {e}")
     sys.exit()
 
 # --- フォント・テキスト準備 ---
-game_over_font, info_font = pygame.font.Font(None, 100), pygame.font.Font(None, 50)
+title_font, info_font = pygame.font.Font(None, 120), pygame.font.Font(None, 50)
+button_font, stage_title_font = pygame.font.Font(None, 60), pygame.font.Font(None, 40)
+game_over_font, ui_font = pygame.font.Font(None, 100), pygame.font.Font(None, 40)
+title_text = title_font.render("Grid Greed", True, WHITE)
+title_rect = title_text.get_rect(center=(WIDTH // 2, HEIGHT // 3))
+start_text = info_font.render("Press SPACE to Start", True, WHITE)
+start_rect = start_text.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+stage_select_title = title_font.render("STAGE SELECT", True, WHITE)
+stage_select_title_rect = stage_select_title.get_rect(center=(WIDTH // 2, 100))
 game_over_text = game_over_font.render("GAME OVER", True, RED)
 game_over_rect = game_over_text.get_rect(center=(WIDTH // 2, HEIGHT // 2))
 restart_text = info_font.render("Press SPACE to Restart", True, WHITE)
@@ -85,25 +101,43 @@ player_x, player_y = 0, 0
 field, last_move_time, coin_count = [], 0, 0
 rope_pos = (GRID_WIDTH // 2, GRID_HEIGHT // 2)
 rope = None
-oni_list = [] # ▼▼▼【変更】鬼のリストを追加 ▼▼▼
+oni_list = []
+scroll_y = 0
+is_scrolling = False # ▼▼▼【変更】スクロール中かどうかのフラグを追加 ▼▼▼
 MODE = "START_SCREEN"
 
-# ▼▼▼【変更】鬼をクラスで管理する ▼▼▼
+# --- 各クラス定義 ---
+class Stage:
+    def __init__(self, name, y_pos, locked=False):
+        self.name, self.locked = name, locked
+        self.panel_rect = stage_panel_img.get_rect(center=(WIDTH // 2, y_pos))
+        self.title_text = stage_title_font.render(name, True, BLACK)
+        self.title_rect = self.title_text.get_rect(center=self.panel_rect.center)
+    def draw(self, surface, scroll):
+        draw_rect = self.panel_rect.move(0, scroll)
+        if -self.panel_rect.height < draw_rect.top < HEIGHT:
+            surface.blit(stage_panel_img, draw_rect)
+            if self.locked:
+                lock_rect = lock_icon_img.get_rect(center=draw_rect.center)
+                surface.blit(lock_icon_img, lock_rect)
+            else:
+                title_draw_rect = self.title_rect.move(0, scroll)
+                surface.blit(self.title_text, title_draw_rect)
+    def is_clicked(self, pos, scroll):
+        draw_rect = self.panel_rect.move(0, scroll)
+        return not self.locked and draw_rect.collidepoint(pos)
+
+stages = [Stage("Tutorial", 250), Stage("Stage 2", 450, locked=True), Stage("Stage 3", 650, locked=True)]
+
 class Oni:
     def __init__(self, x, y):
-        self.x = x
-        self.y = y
-        self.move_interval = random.randint(450, 650) # 鬼ごとに少し速度を変える
-        self.last_move_time = 0
+        self.x, self.y, self.last_move_time = x, y, 0
+        self.move_interval = random.randint(450, 650)
         self.image = oni_img
-
     def update_position(self, bfs_map, player_pos):
-        next_pos = get_oni_next_move(bfs_map, (self.x, self.y), player_pos)
-        self.x, self.y = next_pos
-
+        self.x, self.y = get_oni_next_move(bfs_map, (self.x, self.y), player_pos)
     def draw(self, surface):
         surface.blit(self.image, (self.x * GRID_SIZE, self.y * GRID_SIZE))
-# ▲▲▲【変更】ここまで ▲▲▲
 
 class Rope:
     def __init__(self, x_pixel, target_y_pixel):
@@ -119,46 +153,6 @@ class Rope:
             draw_x = self.x - scaled_rope.get_width() // 2
             surface.blit(scaled_rope, (draw_x, 0))
 
-def reset_game():
-    global player_x, player_y, field, last_move_time, coin_count, rope, oni_list
-    player_x, player_y = rope_pos; coin_count = 0; rope = None
-    oni_list = [] # 鬼のリストをリセット
-
-    field = [[{"type": "grass", "bush": False, "coin": False} for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
-    
-    occupied_positions = {(player_x, player_y)} # プレイヤーの位置を占有済みとする
-
-    rocks_set = set()
-    while len(rocks_set) < random.randint(5, 10):
-        rx, ry = random.randint(0, GRID_WIDTH - 1), random.randint(0, GRID_HEIGHT - 1)
-        if (rx, ry) not in occupied_positions:
-            field[ry][rx]["type"] = "rock"; rocks_set.add((rx, ry)); occupied_positions.add((rx, ry))
-    
-    coins_placed = 0
-    while coins_placed < 20:
-        cx, cy = random.randint(0, GRID_WIDTH - 1), random.randint(0, GRID_HEIGHT - 1)
-        if (cx, cy) not in occupied_positions and not field[cy][cx]["coin"]:
-            field[cy][cx]["coin"] = True; coins_placed += 1
-    
-    # ▼▼▼【変更】鬼を2体生成する ▼▼▼
-    for _ in range(2):
-        while True:
-            ox, oy = random.randint(0, GRID_WIDTH - 1), random.randint(0, GRID_HEIGHT - 1)
-            distance = abs(ox - player_x) + abs(oy - player_y)
-            if (ox, oy) not in occupied_positions and distance >= 3:
-                oni_list.append(Oni(ox, oy))
-                occupied_positions.add((ox, oy))
-                break
-    # ▲▲▲【変更】ここまで ▲▲▲
-
-    for y in range(GRID_HEIGHT):
-        for x in range(GRID_WIDTH):
-            if field[y][x]["type"] == "grass" and random.random() < 0.1: field[y][x]["bush"] = True
-            if 0 <= y - 1 and field[y - 1][x]["bush"] and random.random() < 0.4: field[y][x]["bush"] = True
-            if 0 <= x - 1 and field[y][x - 1]["bush"] and random.random() < 0.4: field[y][x]["bush"] = True
-    
-    last_move_time = 0
-
 class Leaf:
     def __init__(self):
         self.x, self.y = random.randint(WIDTH // 2, WIDTH + 50), random.randint(-50, 0)
@@ -173,25 +167,46 @@ class Leaf:
         leaf_rect = rotated_leaf.get_rect(center=(int(self.x), int(self.y)))
         surface.blit(rotated_leaf, leaf_rect)
 
+def reset_game():
+    global player_x, player_y, field, last_move_time, coin_count, rope, oni_list
+    player_x, player_y = rope_pos; coin_count = 0; rope = None; oni_list = []
+    field = [[{"type": "grass", "bush": False, "coin": False} for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
+    occupied_positions = {(player_x, player_y)}
+    rocks_set = set()
+    while len(rocks_set) < random.randint(5, 10):
+        rx, ry = random.randint(0, GRID_WIDTH - 1), random.randint(0, GRID_HEIGHT - 1)
+        if (rx, ry) not in occupied_positions:
+            field[ry][rx]["type"] = "rock"; rocks_set.add((rx, ry)); occupied_positions.add((rx, ry))
+    coins_placed = 0
+    while coins_placed < 20:
+        cx, cy = random.randint(0, GRID_WIDTH - 1), random.randint(0, GRID_HEIGHT - 1)
+        if (cx, cy) not in occupied_positions and not field[cy][cx]["coin"]:
+            field[cy][cx]["coin"] = True; coins_placed += 1
+    for y in range(GRID_HEIGHT):
+        for x in range(GRID_WIDTH):
+            if field[y][x]["type"] == "grass" and random.random() < 0.1: field[y][x]["bush"] = True
+            if 0 <= y - 1 and field[y - 1][x]["bush"] and random.random() < 0.4: field[y][x]["bush"] = True
+            if 0 <= x - 1 and field[y][x - 1]["bush"] and random.random() < 0.4: field[y][x]["bush"] = True
+    for _ in range(2):
+        while True:
+            ox, oy = random.randint(0, GRID_WIDTH - 1), random.randint(0, GRID_HEIGHT - 1)
+            distance = abs(ox - player_x) + abs(oy - player_y)
+            if (ox, oy) not in occupied_positions and distance >= 3:
+                oni_list.append(Oni(ox, oy)); occupied_positions.add((ox, oy)); break
+    last_move_time = 0
+
 def draw_coin_counter(surface, count):
-    start_x = 10
-    surface.blit(coin_display_img, (start_x, 10))
+    start_x = 10; surface.blit(coin_display_img, (start_x, 10))
     current_x = start_x + coin_display_img.get_width() + 5
-    count_str = str(count)
-    if not count_str: count_str = "0"
+    count_str = str(count) if count > 0 else "0"
     for digit in count_str:
-        num_img = number_images[int(digit)]
-        surface.blit(num_img, (current_x, 23))
-        current_x += num_img.get_width() + 2
-    surface.blit(slash_img, (current_x, 23))
-    current_x += slash_img.get_width() + 2
+        num_img = number_images[int(digit)]; surface.blit(num_img, (current_x, 23)); current_x += num_img.get_width() + 2
+    surface.blit(slash_img, (current_x, 23)); current_x += slash_img.get_width() + 2
     total_str = "20"
     for digit in total_str:
-        num_img = number_images[int(digit)]
-        surface.blit(num_img, (current_x, 23))
-        current_x += num_img.get_width() + 2
+        num_img = number_images[int(digit)]; surface.blit(num_img, (current_x, 23)); current_x += num_img.get_width() + 2
 
-# メインループ
+# --- メインループ ---
 clock = pygame.time.Clock()
 MOVE_INTERVAL_NORMAL, MOVE_INTERVAL_SLOW = 150, 600
 blink_interval, leaf_spawn_interval = 500, 600
@@ -201,12 +216,41 @@ show_press_enter, leaves = True, []
 while True:
     for event in pygame.event.get():
         if event.type == pygame.QUIT: pygame.quit(); sys.exit()
-        if event.type == pygame.KEYDOWN:
-            if MODE == "START_SCREEN" and event.key == pygame.K_SPACE:
-                reset_game(); MODE = "PLAYING"
-            elif (MODE == "GAME_OVER" or MODE == "STAGE_CLEAR") and event.key == pygame.K_SPACE:
-                MODE = "START_SCREEN"
+        
+        if MODE == "START_SCREEN":
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+                MODE = "STAGE_SELECT"
+        
+        elif MODE == "STAGE_SELECT":
+            # ▼▼▼【変更】スクロールとクリックの判定ロジックを修正 ▼▼▼
+            if event.type == pygame.MOUSEWHEEL:
+                is_scrolling = True # スクロールが開始された
+                scroll_y += event.y * 20
+                max_scroll = (len(stages) - 2) * 200
+                scroll_y = max(min(scroll_y, 0), -max_scroll)
+            
+            if event.type == pygame.MOUSEBUTTONUP:
+                # マウスボタンが離された瞬間に、スクロール中でなければクリックと判定
+                if not is_scrolling:
+                    for stage in stages:
+                        if stage.is_clicked(event.pos, scroll_y):
+                            reset_game()
+                            MODE = "PLAYING"
+                            break
+                # いずれの場合も、マウスを離したらスクロール状態をリセット
+                is_scrolling = False
 
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                # マウスを押した瞬間は、まだスクロールかどうか判断できないので
+                # スクロール状態を一旦リセットする
+                is_scrolling = False
+            # ▲▲▲【変更】ここまで ▲▲▲
+
+        elif MODE == "GAME_OVER" or MODE == "STAGE_CLEAR":
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+                MODE = "START_SCREEN"
+    
+    # --- モード別の描画・ロジック処理 ---
     if MODE == "START_SCREEN":
         current_time = pygame.time.get_ticks()
         if current_time - last_blink_time > blink_interval:
@@ -224,6 +268,12 @@ while True:
             press_enter_rect = press_enter_img.get_rect(centerx=WIDTH // 2, bottom=copyright_rect.top - 10)
             screen.blit(press_enter_img, press_enter_rect)
     
+    elif MODE == "STAGE_SELECT":
+        screen.fill(BLACK)
+        for stage in stages:
+            stage.draw(screen, scroll_y)
+        screen.blit(stage_select_title, stage_select_title_rect)
+
     elif MODE == "PLAYING":
         current_time = pygame.time.get_ticks()
         keys = pygame.key.get_pressed()
@@ -244,17 +294,13 @@ while True:
             MODE = "STAGE_CLEAR"
         if rope: rope.update()
         
-        # ▼▼▼【変更】すべての鬼をループで処理 ▼▼▼
         bfs_map = ["".join(["#" if cell["type"] == "rock" else "." for cell in row]) for row in field]
         for oni in oni_list:
             if current_time - oni.last_move_time > oni.move_interval:
-                oni.update_position(bfs_map, (player_x, player_y))
-                oni.last_move_time = current_time
+                oni.update_position(bfs_map, (player_x, player_y)); oni.last_move_time = current_time
             if (oni.x, oni.y) == (player_x, player_y):
-                MODE = "GAME_OVER"
-                break # 一体でも捕まったらループを抜ける
-        # ▲▲▲【変更】ここまで ▲▲▲
-
+                MODE = "GAME_OVER"; break
+        
         # 描画 (プレイ中)
         screen.fill(BG_GREEN) 
         for y in range(GRID_HEIGHT):
@@ -271,10 +317,7 @@ while True:
         for x in range(0, WIDTH, GRID_SIZE): pygame.draw.line(screen, BLACK, (x, 0), (x, HEIGHT))
         for y in range(0, HEIGHT, GRID_SIZE): pygame.draw.line(screen, BLACK, (0, y), (WIDTH, y))
         screen.blit(hero_img, (player_x * GRID_SIZE, player_y * GRID_SIZE))
-        # ▼▼▼【変更】すべての鬼を描画 ▼▼▼
-        for oni in oni_list:
-            oni.draw(screen)
-        # ▲▲▲【変更】ここまで ▲▲▲
+        for oni in oni_list: oni.draw(screen)
         draw_coin_counter(screen, coin_count)
 
     elif MODE == "GAME_OVER":
