@@ -25,13 +25,13 @@ class DummyEnv(gym.Env):
 
 # 学習済みモデルをロード
 # グローバルスコープで一度だけロード
-model_path = "model/enemy_model3.zip"
+model_path = "model/oni_model.zip"
 try:
     # Stable Baselines3のモデルは、`.zip`拡張子がないと正しくロードできない場合があります
     if not os.path.exists(model_path):
         # 以前のバージョンで保存したモデル名が `enemy_model3` だった場合に対応
         # この処理は、新しいモデルを保存する際に `.zip` を付けることで不要になります
-        PPO.load("model/enemy_model3", env=DummyEnv()).save(model_path)
+        PPO.load("model/oni_model", env=DummyEnv()).save(model_path)
     
     # env=DummyEnv() を指定して、モデルが環境の観測・行動空間を認識できるようにします
     model = PPO.load(model_path, env=DummyEnv())
